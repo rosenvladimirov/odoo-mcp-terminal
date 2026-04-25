@@ -1,0 +1,347 @@
+# Changelog
+
+## 18.0.1.29.0 — Anthropic key removal + Qdrant guard + rotation tracking
+
+Port of three coordinated changes from the 19.0 branch (AI OCR session
+2026-04-21). Code is identical to `mcp_terminal` 19.0.1.27.0;
+only manifest version + CHANGELOG header differ.
+
+### Removed — `claude_anthropic_api_key` field and per-user Anthropic pre-auth
+- `res.users.claude_anthropic_api_key` field + action methods removed
+- `get_claude_mcp_config` no longer returns `anthropic_api_key`
+- Client OWL components (chatter/list/kanban) stop passing
+  `ANTHROPIC_API_KEY` to the ttyd URL; terminal container env var is the
+  server-side fallback, `/login` inside the terminal is the manual path.
+
+### Changed — Qdrant cross-company isolation guard (Gap 4.6)
+- `ai.qdrant.client.search()` auto-injects `company_id` filter into the
+  must-clause (opt-out: `filters={"_skip_company_guard": True, ...}`).
+
+### Added — API key rotation tracking (Gap 4.7)
+- `res.company.claude_keys_rotated_at` + computed
+  `claude_keys_age_days` / `claude_keys_needs_rotation` (90-day
+  threshold, all `groups="base.group_system"`).
+- `action_mark_keys_rotated()` + Settings alert banner.
+- Advisory-only nag — no enforcement on any flow.
+
+## 18.0.1.28.0
+
+See `d73725e` — `claude_odoo_verify_ssl` for self-signed certificates.
+
+## 18.0.1.27.0
+
+### Changed — Unified MCP auth (task 6 от MCP unified auth plan)
+- `terminal_utils.js` `buildExternalTerminalUrl()` docstring разширен:
+  описва как предадените URL параметри (API_KEY, ODOO_URL, ODOO_DB,
+  ODOO_USER) стават `Authorization: Bearer` + `X-Odoo-*` заглавки в
+  `start-session.sh` на terminal контейнера. MCP middleware ги
+  валидира през XMLRPC и resolve-ва profile — identify() не се вика
+  експлицитно от JS вече.
+- `res_users.claude_api_key` help text обновен да опише новата двойна
+  роля: удостоверяване за външния terminal + MCP unified-auth. Cache
+  TTL за key rotation е ~5 мин (AUTH_CACHE_TTL env).
+- Няма code changes по rendering страна — всички нужни полета вече се
+  предават от `get_claude_mcp_config` и `buildExternalTerminalUrl`.
+
+## 18.0.1.26.0
+
+### Added — Optional `Authorization: Bearer` header за Ollama embeddings
+- `_embed_ollama` вече чете `company.claude_embedding_api_key` и ако има стойност
+  го изпраща като `Authorization: Bearer <token>` header.
+- Позволява ползване на proxied Ollama endpoint (напр. `https://mcp.odoo-shell.space/ollama`
+  с MCP server passthrough, който валидира `OLLAMA_API_KEY`).
+- Backward compatible: празен ключ → няма header (директен локален Ollama работи както преди).
+- Help text на `claude_embedding_api_key` обновен — вече обхваща и proxied Ollama.
+
+## 18.0.1.25.0
+
+### Added — `_explanation` backport (20.0 forward-compat)
+Port from 19.0.1.20.0:
+- Monkey patch `models.Model._explanation = None` (guard-нат с `hasattr`).
+- `ir.model.get_ai_explanations(model_names=None, lang=None)` с MRO walk,
+  lang markers `[xx_YY]...[/xx_YY]`, unmarked-as-en_US fallback.
+- Whitelist от `ai.view.registry` (active=True).
+- 6 parser unit tests + 4 integration tests.
+
+## 18.0.1.24.0
+
+### Added — AI Tokenizer секция обратно в user form (profile + preferences modal)
+- Седем related полета на `res.users` сочещи към `company_id.claude_*` (qdrant url/api_key/collection_prefix, ollama url/model, embedding provider/api_key) — `readonly=False`, значи редакцията делегира към текущата `res.company` (изисква write права върху фирмата; API ключовете остават `groups="base.group_system"`).
+- View секция "AI Tokenizer (Qdrant + Ollama)" в `hr.res_users_view_form_profile` и в `base.view_users_form_simple_modif` (preferences modal).
+- Петте безопасни полета (без api_key-та) добавени в `SELF_WRITEABLE_FIELDS` — потребителят може да ги редактира в профила си, ако има write върху company.
+- Данните остават company-level (v1.21.0 архитектурата е запазена) — това е само UI surface в user form-а.
+
+## 18.0.1.23.0
+
+### Fixed — AI Tokenizer моделите четат от `res.company`, не от `res.users`
+- Stale references след move-а от res.users → res.company в 1.21.0:
+  - `ai.qdrant.client._base_url/_headers/collection_name/...` ползваха `user.claude_qdrant_*` (вече несъществуващи) — преписани да четат от `company.sudo()` (sudo защото api_key полетата имат `groups="base.group_system"`).
+  - `ai.embedding.provider.embed/vector_size/_embed_ollama/_embed_openai/_embed_voyage` същият проблем — fix-нати към company.
+- Параметърът на public методите се преименува `user=` → `company=` (вътрешен API, не RPC).
+
+### Added — Semantic search API (`ai.composite.document.search_similar`)
+- High-level метод: embed query → Qdrant search с филтри (model/view_type/company_id/db_name) → връща list of hits с `model`, `res_id`, `display_name`, `score`, `snippet`, `view_type`, `qdrant_point_id`.
+- Filter `db_name` се прилага автоматично — изолация между бази при споделен Qdrant.
+
+### Added — `ai.composite.document.collection_stats()`
+- Връща info за per-DB Qdrant collection: `vector_size`, `distance`, `qdrant_points`, `qdrant_indexed_vectors`, `odoo_indexed_documents`, `status`. За UI status widget и MCP `qdrant_collection_info` tool.
+
+### Added — Nightly re-indexing cron
+- `ir.cron` "AI Tokenizer — re-index stale documents" — `cron_reindex_stale(batch_size=50)` обработва документи в state `stale|draft|error` от активни registry entries.
+- **Disabled by default** (`active=eval('False')`) — admin-ът активира когато е готов да тоkenize-ва на background.
+- Commit per document — частичен прогрес оцелява при срив.
+
+## 18.0.1.22.0
+
+### Added — Form View Grabber on `ai.view.registry`
+- New method `action_scan_form_views()` discovers every distinct model that has at least one `ir.ui.view` of `type='form'` and creates a registry entry per (model, form) pair that's not already registered.
+- Created entries are **inactive by default** (`active=False`, `priority=50`) — admin opts in deliberately to avoid flooding Qdrant with technical models.
+- **Filtering** (in `_grabber_is_skipped`):
+  - Prefix blacklist: `ir.`, `base.`, `bus.`, `mail.`, `web.`, `web_editor.`, `res.config.`, `res.users.`, `res.groups`, `res.lang`, `res.currency.rate`, `ai.`, `claude.`, `format.`, `report.`.
+  - Exact blacklist: `res.config.settings`, identitycheck/apikey wizards, base.module/language wizards.
+  - Skips `_transient`, `_abstract`, `not _auto` (no DB table).
+- Two entry points to call it:
+  - **Header button "Scan Form Views"** on the registry list view (`btn-primary`, with confirm).
+  - **Server action "Scan Form Views (AI Tokenizer)"** in the list's "Actions" gear menu — callable without record selection.
+- Reports created/skipped counts via `display_notification`.
+
+### Fixed — `_is_enabled` reads from company, not user
+- Leftover from the res.users → res.company move (v1.21.0). `_is_enabled` was still checking `user.claude_qdrant_url` which no longer exists; now reads `self.env.company.claude_qdrant_url`.
+
+## 18.0.1.21.2
+
+### Security — Restrict access to Claude MCP secrets
+- `get_claude_mcp_config()` now requires `base.group_system`. Previously any logged-in user (including portal/internal with minimal rights) could RPC-call this method and receive plaintext: Anthropic API key, MCP token, Telegram api_hash, Viber bot token, web-session password, **company-level Qdrant + embedding API keys**.
+- `res.company.claude_qdrant_api_key` and `res.company.claude_embedding_api_key` now declare `groups="base.group_system"` — read access enforced at ORM level, not just UI password masking. Same on the related fields in `res.config.settings`.
+
+## 18.0.1.21.1
+
+### Fixed — Manifest `website` URL
+- Was pointing to `nicePrintBulgaria/l10n-bulgaria` (wrong account). Now points to the actual repo and module subpath: `rosenvladimirov/l10n-bulgaria/tree/18.0/mcp_terminal`.
+
+## 18.0.1.21.0
+
+### Changed — AI Tokenizer config moved from `res.users` to `res.company`
+- **Rationale**: Qdrant endpoint, Ollama endpoint, embedding provider and API keys are infrastructure settings that belong to the company, not to each user. Per-user storage caused duplicate config and meant each user had to set them independently.
+- New model: `res.company` with seven fields (`claude_qdrant_url`, `claude_qdrant_api_key`, `claude_qdrant_collection_prefix`, `claude_ollama_url`, `claude_ollama_model`, `claude_embedding_provider`, `claude_embedding_api_key`).
+- New model: `res.config.settings` exposes those as related fields; new UI block "AI Tokenizer (Qdrant + Ollama)" in Settings → General Settings (inherits `base_setup.res_config_settings_view_form`).
+- Removed the same seven fields from `res.users` and from the "AI Tokenizer" group in My Profile → Claude Terminal tab.
+- `action_test_connections` and `get_config()` now read from `user.company_id.claude_*`.
+- Added dependency `base_setup` (for the General Settings form inheritance anchor).
+
+### Migration — `migrations/18.0.1.21.0/post-migration.py`
+- Copies existing `res_users.claude_qdrant_*/ollama_*/embedding_*` values from the first admin user (`base.group_system`) into `res_company` row id=1, but only for fields that are still empty on the company — prevents overwriting values already set directly on the company.
+- Drops the legacy user columns afterwards (Odoo doesn't auto-drop removed fields).
+- Idempotent: if columns are already gone or no legacy values exist, migration is a no-op.
+
+## 18.0.1.20.1
+
+### Fixed — CodeEditor `mode` prop validation error on AI View Registry form
+- `field_spec` used `widget="ace" options="{'mode': 'json'}"` but Odoo 18 CodeEditor only accepts `javascript|xml|qweb|scss|python` (validated via `CodeEditor.MODES`).
+- Changed to `'mode': 'javascript'` — JSON content is still highlighted correctly (JSON is a valid JavaScript subset).
+- Symptom: `OwlError: Invalid props for component 'CodeEditor': 'mode' is not valid` when opening the AI View Registry form view.
+
+## 18.0.1.20.0
+
+### Added — Qdrant + Ollama checks in Test Connection chain
+- `action_test_connections` extended with two new stages: Qdrant (`GET /collections`) and Ollama (`GET /api/tags` — verifies the configured embedding model is actually pulled).
+- When `claude_embedding_provider != 'ollama'`, the Ollama stage reports `warn` with the active provider name (no spurious errors for OpenAI/Voyage/Anthropic setups).
+- Qdrant stage distinguishes missing api-key (HTTP 401/403 → `warn`) from real connectivity errors.
+
+### Added — `ai_tokenizer` block in `get_config()` payload
+- MCP server now receives Qdrant/Ollama/provider configuration from the Odoo user profile, no separate MCP-side config needed.
+- Fields exposed: `enabled`, `qdrant_url`, `qdrant_api_key`, `collection_prefix`, `ollama_url`, `ollama_model`, `provider`, `embedding_api_key`.
+
+### Added — Frontend AI Tokenizer status widget
+- New OWL component (`ai_tokenizer_status.js/xml/scss`) registered in `web.assets_backend` — shows per-collection parse/tokenize progress.
+
+## 18.0.1.19.0
+
+### Added — AI Tokenizer foundation (Qdrant + Ollama)
+- Six new models wire up vector tokenization of Odoo records:
+  - `ai.view.registry` — per-model+view entries with `Re-parse Arch` / `Tokenize All` / `Documents` actions.
+  - `ai.composite.document` — generated documents (token count + embedding vector reference).
+  - `ai.view.parser` — extracts tokenizable fields from view arch, filtering system/chatter fields via `EXCLUDED_FIELDS`.
+  - `ai.embedding.provider` (AbstractModel) — dispatcher for Ollama / OpenAI / Voyage / Anthropic.
+  - `ai.qdrant.client` (AbstractModel) — minimal REST client covering collection and point lifecycle.
+  - `ai.document.builder` (AbstractModel) — flattens a record into structured text (`MAX_O2M_ROWS=100`, `MAX_M2M_NAMES=20`).
+- New user fields (Claude Terminal tab): `claude_qdrant_url/api_key/collection_prefix`, `claude_ollama_url/model`, `claude_embedding_provider` (ollama/openai/voyage/anthropic), `claude_embedding_api_key`.
+- New menu `Administration → AI Tokenizer` with *View Registry* and *Composite Documents* entries (restricted to `base.group_system`).
+- ACL entries for user read / system full access on both registry and document models.
+
+## 18.0.1.18.0
+
+### Fixed — Test Connection now honors `claude_odoo_protocol` selector
+- Previously `action_test_connections` always used XML-RPC regardless of the protocol field — JSON-RPC selection was ignored.
+- Now branches on `claude_odoo_protocol`: tries the chosen protocol first, then the other, then `/web/session/authenticate` as fallback.
+- The notification message includes the protocol that actually succeeded: e.g. `[XML-RPC] Connected — UID 2, Odoo 18.0`.
+- Web Session fallback works through reverse proxies (Cloudflare Access, Traefik, Nginx) that block `/xmlrpc/*` and `/jsonrpc` but allow `/web/*`.
+- On total failure, message lists each attempt's error so misconfigurations are easier to diagnose.
+
+## 18.0.1.17.0
+
+### Changed — Claude Terminal page in "My Profile" (hr.res_users_view_form_profile)
+- Reverted previous attempt to inherit `base.view_users_form` (admin-only Settings → Users)
+- Now inherits `hr.res_users_view_form_profile` — the "My Profile" form opened from the avatar dropdown when `hr` is installed
+- Each user sees only their own Claude Terminal config (not other users')
+- Added `hr` to manifest depends
+
+## 18.0.1.16.0
+
+### Added — Claude Terminal page in main user form (REVERTED in 17.0)
+
+## 18.0.1.15.0
+
+### Added — OAuth token support + helper buttons (port from 19.0)
+- `claude_anthropic_api_key` accepts both API keys (`sk-ant-api03-…`) and OAuth tokens (`sk-ant-oat01-…` from Pro/Teams/Max via `claude /login`)
+- New action `action_open_anthropic_console` — opens Anthropic Console API Keys page
+- New action `action_open_claude_oauth` — opens Claude.ai login page
+- View redesigned with info panel + two helper buttons next to the field
+- Updated help text to describe both auth modes
+
+## 18.0.1.14.0
+
+### Added — Anthropic API Key pre-authentication
+- New `claude_anthropic_api_key` field on res.users (Settings → Preferences → Claude Terminal)
+- When set, passes `ANTHROPIC_API_KEY` as environment variable to the terminal session
+- Claude Code CLI starts pre-authenticated — no login prompt on every terminal open
+- User can still re-authenticate manually with `/login` inside the terminal
+- Supported in all terminal modes: chatter, list view dialog, kanban view dialog
+- Works in both local and external terminal modes
+
+## 18.0.1.13.0
+
+### Fix Test Connections — switch from bus to display_notification chain
+- Root cause: returning `False` from a button triggers `ir.actions.act_window_close`
+  in `action_service.js` (line 1242: falsy → `{type: "ir.actions.act_window_close"}`)
+  which closes the preferences dialog
+- Fix: return a `display_notification` action chain; chain terminates when the last
+  item has no `next` → `client_actions.js` returns `undefined` → `if (next)` is false
+  → dialog stays open
+- Remove `bus.bus._sendone` loop and `notifs` list; no bus channel needed for this
+
+## 18.0.1.12.3
+
+### Inline type mapping in action_test_connections
+- Remove local `def notif_type(status)` helper — inline the dict lookup
+  directly in the `_sendone` payload: `{"ok": "success", ...}.get(n["status"], "info")`
+
+## 18.0.1.12.2
+
+### Use bus simple_notification for connection test toasts
+- `action_test_connections` uses `bus.bus._sendone(..., "simple_notification", ...)`
+  — the standard Odoo built-in handler in `bus/simple_notification_service.js`
+- No custom JS needed; 3 separate sticky toasts, form stays open
+
+## 18.0.1.12.1
+
+### Fix Sticky Notifications — Revert to display_notification
+- Replace bus approach with direct `display_notification` chain
+- `next` is inside `params` (confirmed from Odoo JS source: `client_actions.js`
+  reads `params.next` and returns it for dispatch)
+- `False` as terminal — JS treats it as falsy, stops the chain cleanly
+- Remove `claude_terminal/notification` bus subscription from refresh service
+
+## 18.0.1.12.0
+
+### Refactor Connection Tests — Bus Notifications
+- Remove `claude.terminal.test.wizard` transient model (no longer needed)
+- `action_test_connections` now sends each result as a separate bus
+  notification via `claude_terminal/notification` channel and returns `False`
+- `terminal_refresh_service.js` subscribes to `claude_terminal/notification`
+  and shows sticky toasts via the Odoo notification service — form stays open
+
+## 18.0.1.11.1
+
+### Fix Sticky Notifications Chain
+- Move `next` to root level of the action dict (Odoo 17+ style) + keep in
+  `params` for backward compat — fixes chained toasts not appearing
+- Use `False` as terminal instead of `{"type": "ir.actions.do_nothing"}`
+
+## 18.0.1.11.0
+
+### Test Connections — Sticky Notifications
+- Replaced modal wizard with 3 chained sticky toast notifications (one per
+  connection type: Odoo RPC, MCP Server, Web Session)
+- Preferences form stays open during/after testing
+- `action_test_connections` now runs tests inline (no wizard dialog)
+- Import `urllib.error` and `xmlrpc.client` added to `res_users.py`
+
+## 18.0.1.10.0
+
+### Test Connections Wizard
+- New `claude.terminal.test.wizard` TransientModel — tests all three connection
+  types (Odoo RPC, MCP Server, Web Session) and shows color-coded badge results:
+  green (OK), yellow (Warning), red (Error)
+- New button **Test Connections** in user preferences (opens the wizard dialog)
+
+### Save to MCP Button
+- New button **Save to MCP** in user preferences — POSTs the current Odoo
+  instance connection config (`url`, `db`, `user`, `api_key`, `protocol`) to
+  `{mcp_url}/api/user/connections` with `X-Api-Token` authentication
+- Displays a success or error notification after the operation
+
+## 18.0.1.9.0
+
+### Odoo RPC API Key
+- New field `claude_odoo_api_key` (Char, password) in the "Odoo RPC Connector"
+  group — stores the Odoo API key used by the MCP server to authenticate against
+  the configured Odoo instance
+- `get_claude_mcp_config()` now returns `odoo.api_key`
+
+## 18.0.1.8.0
+
+### External Terminal Support
+- New field `claude_use_external_terminal` (Boolean) — switch between local and
+  external Docker terminal
+- New field `claude_api_key` (Char) — Odoo API key for external auth
+  (visible only when external mode is enabled)
+- Both modes always use iframe (embedded in chatter/list/kanban):
+  - **OFF**: iframe → local host ttyd (ODOO_ORIGIN params, no API key)
+  - **ON**: iframe → external Docker terminal (API_KEY + ODOO_URL params)
+- `get_claude_mcp_config()` now returns `use_external` and `api_key`
+
+### Shared URL Builder
+- New `terminal_utils.js` with `buildExternalTerminalUrl()` helper
+- All external URL construction goes through one function
+
+### Redesigned Terminal Panel UI
+- New header: logo icon + "Claude" title + "Terminal" badge + model breadcrumb
+- Status dot with glow effect (green=connected, yellow=loading, red=error)
+- Status bar at bottom showing connection state + active model
+- Refined SCSS: softer shadows, 10px radius, accent hover states
+- Monospace breadcrumb for `model / #resId` context
+
+### Theme
+- Switched from dark Catppuccin Mocha to clean light theme matching Odoo UI
+- White background, Odoo purple accent (#714ba0), light borders
+
+## 18.0.1.7.0
+
+- Add AI button in kanban view (next to New, reuses list view dialog)
+- `KanbanController` patch: bus refresh listener for CLAUDE_REFRESH events
+
+## 18.0.1.6.0
+
+- Live refresh: MCP `odoo_write` / `odoo_create` now sends bus events with
+  model, res_ids and changed field values.
+- New bus channels: `claude_terminal/refresh_field`, `claude_terminal/refresh_list`.
+- New `res.users` methods: `notify_claude_refresh_field`, `notify_claude_refresh_list`.
+- `FormController` patch: flashes changed fields (blue glow) when Claude writes
+  to the currently open record.
+- `ListController` patch: highlights new rows (green flash) when Claude creates
+  records in the currently open list.
+- Companion MCP server changes: SQLite `SessionManager`, session registration
+  endpoint, automatic notify hooks in `odoo_write`/`odoo_create`.
+
+## 18.0.1.3.0
+
+- Add AI button in list view (next to New, same CSS)
+- Add modal dialog with Claude Terminal panel for list views
+- Export ClaudeTerminalPanel for reuse across components
+
+## 18.0.1.2.0
+
+- Initial chatter integration with toggle button and terminal panel
+- Per-user configuration (terminal URL, Odoo RPC, Telegram, Viber MCP)
+- Dark theme (Catppuccin Mocha) with expand/collapse support
