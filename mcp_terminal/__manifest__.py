@@ -1,0 +1,41 @@
+# Copyright 2026 Rosen Vladimirov <vladimirov.rosen@gmail.com>
+# License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
+{
+    "name": "MCP Terminal (Chatter & List View)",
+    "version": "17.0.1.30.0",
+    "category": "Productivity",
+    "summary": "Claude Code terminal + AI Tokenizer (Qdrant/Ollama) — MCP Docker stack (international)",
+    "author": "Rosen Vladimirov, BL Consulting",
+    "maintainers": ["rosen-vladimirov"],
+    "website": "https://github.com/rosenvladimirov/odoo-mcp-terminal",
+    "license": "AGPL-3",
+    "depends": ["mail", "web", "bus", "hr", "base_setup"],
+    "excludes": ["l10n_bg_claude_terminal"],
+    "data": [
+        "security/ir.model.access.csv",
+        "data/ai_tokenizer_cron.xml",
+        "views/res_users_views.xml",
+        "views/res_config_settings_views.xml",
+        "views/ai_tokenizer_views.xml",
+    ],
+    "assets": {
+        "web.assets_backend": [
+            "mcp_terminal/static/src/scss/terminal.scss",
+            "mcp_terminal/static/src/scss/terminal_live_refresh.scss",
+            "mcp_terminal/static/src/js/terminal_refresh_service.js",
+            "mcp_terminal/static/src/js/terminal_live_refresh.js",
+            "mcp_terminal/static/src/js/terminal_utils.js",
+            "mcp_terminal/static/src/js/terminal_chatter.js",
+            "mcp_terminal/static/src/xml/terminal_chatter.xml",
+            "mcp_terminal/static/src/js/terminal_listview.js",
+            "mcp_terminal/static/src/xml/terminal_listview.xml",
+            "mcp_terminal/static/src/js/terminal_kanbanview.js",
+            "mcp_terminal/static/src/xml/terminal_kanbanview.xml",
+            "mcp_terminal/static/src/scss/ai_tokenizer_status.scss",
+            "mcp_terminal/static/src/js/ai_tokenizer_status.js",
+            "mcp_terminal/static/src/xml/ai_tokenizer_status.xml",
+        ],
+    },
+    "installable": True,
+    "application": False,
+}
