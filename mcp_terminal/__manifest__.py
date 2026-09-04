@@ -5,7 +5,7 @@
     "version": "19.0.1.28.0",
     "category": "Productivity",
     "summary": "Claude Code terminal + AI Tokenizer (Qdrant/Ollama) — MCP Docker stack (international)",
-    "author": "Rosen Vladimirov, BL Consulting",
+    "author": "Rosen Vladimirov, Terraros Commerce Ltd.",
     "maintainers": ["rosen-vladimirov"],
     "website": "https://github.com/rosenvladimirov/odoo-mcp-terminal",
     "license": "AGPL-3",
